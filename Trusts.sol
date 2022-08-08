@@ -3,26 +3,32 @@
 pragma solidity ^0.8.0;
 
 abstract contract Trust {
-    uint blockNumberExpiration;
     address recipient;
 
-    constructor(uint blockNumberExpiration_, address recipient_) {
-        blockNumberExpiration = blockNumberExpiration_;
+    constructor(address recipient_) {
         recipient = recipient_;
     }
 
-    function withdraw() public virtual;
-
     function _sendBalance() internal {
         payable(recipient).transfer(address(this).balance);
+    }
+
+    function withdraw() public virtual;
+}
+
+abstract contract BlockNumberSecuredTrust is Trust {
+    uint blockNumberExpiration;
+
+    constructor(uint blockNumberExpiration_, address recipient_) Trust(recipient_) {
+        blockNumberExpiration = blockNumberExpiration_;
     }
 }
 
 // This version only lets the designated recipient withdraw, so they can keep it in the contract
 //  longer than the block number.
-contract RecipientTimedTrust is Trust {
-    constructor(uint blockNumberExpiration_, address recipient_) Trust(blockNumberExpiration_, recipient_) { }
-    
+contract RecipientTimedTrust is BlockNumberSecuredTrust {
+    constructor(uint blockNumberExpiration_, address recipient_) BlockNumberSecuredTrust(blockNumberExpiration_, recipient_) { }
+
     function withdraw() public virtual override {
         if (msg.sender == recipient && block.number >= blockNumberExpiration) {
             super._sendBalance();
@@ -33,8 +39,8 @@ contract RecipientTimedTrust is Trust {
 // This version lets anyone call withdraw but the funds still only go to the recipient. Means a
 //  rando can force the recipient to receive the funds, but is also simpler - may be more futureproof;
 //  no weird hacks around unexpected behaviour in the global msg object
-contract PubliclyTimedTrust is Trust {
-    constructor(uint blockNumberExpiration_, address recipient_) Trust(blockNumberExpiration_, recipient_) { }
+contract PubliclyTimedTrust is BlockNumberSecuredTrust {
+    constructor(uint blockNumberExpiration_, address recipient_) BlockNumberSecuredTrust(blockNumberExpiration_, recipient_) { }
 
     function withdraw() public virtual override {
         if (block.number >= blockNumberExpiration) {
@@ -46,10 +52,10 @@ contract PubliclyTimedTrust is Trust {
 // This version lets the deployer update the block number expiration. Useful for if changes to
 //  Ethereum make blocks drastically longer or shorter. Of course, introduces another wrinkle
 //  that may come with bugs or hackabilities.
-abstract contract UpdateableTrust is Trust {
+abstract contract UpdateableTrust is BlockNumberSecuredTrust {
     address deployer;
 
-    constructor(uint blockNumberExpiration_, address recipient_) Trust(blockNumberExpiration_, recipient_) {
+    constructor(uint blockNumberExpiration_, address recipient_) BlockNumberSecuredTrust(blockNumberExpiration_, recipient_) {
         deployer = msg.sender;
     }
 
@@ -76,6 +82,27 @@ contract UpdateableRecipientTimedTrust is UpdateableTrust {
 
     function withdraw() public virtual override {
         if (msg.sender == recipient && block.number >= blockNumberExpiration) {
+            super._sendBalance();
+        }
+    }
+}
+
+// in a total other vein...
+contract HashSecuredTrust is Trust {
+    bytes32 hash;
+    bool guessed;
+
+    constructor(bytes32 hash_, address recipient_) Trust(recipient_) {
+        hash = hash_;
+    }
+
+    function guess(bytes memory guess_) public {
+        require(msg.sender == recipient);
+        guessed = (keccak256(guess_) == hash);
+    }
+
+    function withdraw() public virtual override {
+        if (guessed) {
             super._sendBalance();
         }
     }
